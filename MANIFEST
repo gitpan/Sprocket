@@ -1,0 +1,20 @@
+MANIFEST
+Makefile.PL
+lib/Sprocket.pm
+lib/Sprocket/Client.pm
+lib/Sprocket/Server.pm
+lib/Sprocket/Common.pm
+lib/Sprocket/Session.pm
+lib/Sprocket/Connection.pm
+lib/Sprocket/Plugin.pm
+lib/Sprocket/Plugin/HTTP.pm
+lib/Sprocket/Plugin/HTTP/ACL.pm
+lib/Sprocket/Plugin/HTTP/Deny.pm
+lib/Sprocket/Plugin/HTTP/Server.pm
+lib/Sprocket/Plugin/Manager.pm
+lib/Sprocket/Plugin/Test.pm
+t/00_compile.t
+t/01_plugin.t
+t/02_template.t
+examples/simple_http.pl
+META.yml                                 Module meta-data (added by MakeMaker)
