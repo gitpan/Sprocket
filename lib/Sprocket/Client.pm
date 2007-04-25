@@ -311,7 +311,7 @@ __END__
 
 =head1 NAME
 
-Sprocket::Client - the Sprocket Client
+Sprocket::Client - The Sprocket Client
 
 =head1 SYNOPSIS
 

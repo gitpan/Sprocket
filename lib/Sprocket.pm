@@ -3,7 +3,7 @@ package Sprocket;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Carp qw( croak );
 use Sprocket::Common;
@@ -265,7 +265,7 @@ sub _log {
     my $l = $o{l} ? $o{l}+1 : 1;
     my $caller = $o{call} ? $o{call} : ( caller($l) )[3] || '?';
     $caller =~ s/^POE::Component/PoCo/o;
-    print STDERR '['.localtime()."][$self->{connections}][$caller][$sender] $o{msg}\n";
+    print STDERR '['.localtime()."][pid:$$][$self->{connections}][$caller][$sender] $o{msg}\n";
 }
 
 sub cleanup {

@@ -1,8 +1,10 @@
 MANIFEST
 Makefile.PL
 lib/Sprocket.pm
+lib/Sprocket/AIO.pm
 lib/Sprocket/Client.pm
 lib/Sprocket/Server.pm
+lib/Sprocket/Server/PreFork.pm
 lib/Sprocket/Common.pm
 lib/Sprocket/Session.pm
 lib/Sprocket/Connection.pm
@@ -17,4 +19,5 @@ t/00_compile.t
 t/01_plugin.t
 t/02_template.t
 examples/simple_http.pl
+examples/prefork_simple_http.pl
 META.yml                                 Module meta-data (added by MakeMaker)

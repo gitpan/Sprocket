@@ -32,7 +32,7 @@ sub spawn {
             local_timeout
 
             accept
-        )
+        ),
     );
 
     return $self;
@@ -65,6 +65,11 @@ sub _startup {
     );
 
     $self->_log(v => 2, msg => "Listening to port $self->{opts}->{listen_port} on $self->{opts}->{listen_address}");
+
+    if ( $self->{opts}->{pre_fork} ) {
+        $kernel->state( _dofork => $self );
+        $kernel->post( $session => '_dofork' );
+    }
 }
 
 sub _stop {
@@ -200,7 +205,7 @@ sub local_timeout {
 
 =head1 NAME
 
-Sprocket::Server - the Sprocket Server Baseclass
+Sprocket::Server - The Sprocket Server
 
 =head1 SYNOPSIS
 
