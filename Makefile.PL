@@ -12,6 +12,7 @@ WriteMakefile(
         # includes my filter fix
         'POE'       => '0.3502',
         'Class::Accessor::Fast' => undef,
+        'POE::Component::DNS' => undef,
 #        'HTTP::Request' => undef,
 #        'HTTP::Status' => undef,
 #        'HTTP::Response' => undef,

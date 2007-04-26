@@ -1,5 +1,8 @@
 Revision history for Sprocket
 
+0.04 Thu Apr 26 2007
+    - added poco dns as a prereq
+    
 0.03 Thu Apr 26 2007
     - removed Sprocket::Event
     - finally added this file
