@@ -2,23 +2,21 @@
 
 use lib qw( lib );
 
-# use this before POE, so Sprocket loads the Epoll loop if we have it
 use Sprocket qw(
     Client
     Server::PreFork
     Plugin::HTTP::Server
     Plugin::HTTP::Deny
-    Plugin::Manager
 );
 use POE;
 
 my %opts = (
     LogLevel => 4,
     TimeOut => 0,
-    MaxConnections => 32000,
+#    MaxConnections => 10000,
 );
 
-# comet http server
+# preforking http server
 Sprocket::Server::PreFork->spawn(
     %opts,
     Processes => 4,
@@ -41,21 +39,6 @@ Sprocket::Server::PreFork->spawn(
         },
     ],
 );
-
-# backend server
-Sprocket::Server->spawn(
-    %opts,
-    Name => 'Manager',
-    ListenPort => 5000,
-    ListenAddress => '127.0.0.1',
-    Plugins => [
-        {
-            Plugin => Sprocket::Plugin::Manager->new(),
-            Priority => 0,
-        },
-    ],
-);
-
 
 $poe_kernel->run();
 

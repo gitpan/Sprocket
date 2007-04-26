@@ -1,6 +1,6 @@
 package Sprocket::Plugin::Manager;
 
-use Sprocket qw( Plugin Event );
+use Sprocket qw( Plugin );
 use base 'Sprocket::Plugin';
 
 use POE;
@@ -40,7 +40,7 @@ sub local_connected {
     
     $con->filter->shift(); # POE::Filter::Stream
     
-    $con->send( "Sprocket Manager - commands: dump [val], list conn, con dump [val], find leaks, find refs, quit" );
+    $con->send( "Sprocket Manager - commands: dump [val], list conn, con dump [cid], find leaks(broken), find refs(broken), quit" );
     
     # XXX should we pop the stream filter off the top?
 
@@ -53,7 +53,7 @@ sub local_receive {
     $self->_log( v => 4, msg => "manager:".Data::Dumper->Dump([ $data ]));
     
     if ( $data =~ m/^help/i ) {
-        $con->send( "commands: dump [val], list conn, con dump [val], find leaks, find refs, quit" );
+        $con->send( "commands: dump [val], list conn, con dump [cid], find leaks(broken), find refs(broken), quit" );
     } elsif ( $data =~ m/^dump (.*)/i ) {
         $con->send( eval "Data::Dumper->Dump([$1])" );
     } elsif ( $data =~ m/^x 0x(\S+) (.*)/i ) {
@@ -119,7 +119,8 @@ sub local_receive {
             $con->send( "error (event not sent): $@" );
             return;
         }
-        my $event = new Sprocket::Event( channel => $ch, data => $data );
+        eval "use Sprocket::Event;";
+        my $event = eval "new Sprocket::Event( channel => $ch, data => $data )";
         $poe_kernel->call( $self->{event_manager} => deliver_event => $event );
         $con->send( "sent ".$event->as_string );
     } elsif ( $data =~ m/^add channel (\S+) (.*)/i ) {

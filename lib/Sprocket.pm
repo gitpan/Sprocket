@@ -3,7 +3,7 @@ package Sprocket;
 use strict;
 use warnings;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use Carp qw( croak );
 use Sprocket::Common;
@@ -42,7 +42,7 @@ sub import {
     @modules = map { 'Sprocket::'.$_  } @modules;
    
     # XXX does this work right, TESTME
-    push( @modules, 'POE' );
+    unshift( @modules, 'POE' );
 
     my $package = caller();
     my @failed;
@@ -530,7 +530,8 @@ Sprocket plugins and paired with a L<Sprocket::Server> or L<Sprocket::Client>.
 
 =head1 SEE ALSO
 
-L<POE>, L<Sprocket::Connection>, L<Sprocket::Plugin>, L<Sprocket::Server>, L<Sprocket::Client>
+L<POE>, L<Sprocket::Connection>, L<Sprocket::Plugin>, L<Sprocket::Server>,
+L<Sprocket::Client>, L<Sprocket::AIO>
 
 =head1 AUTHOR
 

@@ -1,7 +1,7 @@
 package Sprocket::Connection;
 
 use POE qw( Wheel::SocketFactory Wheel::ReadWrite );
-use Sprocket qw( Event );
+use Sprocket;
 use Class::Accessor::Fast;
 use Time::HiRes qw( time );
 use base qw( Class::Accessor::Fast );

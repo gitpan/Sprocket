@@ -1,4 +1,5 @@
 MANIFEST
+Changes
 Makefile.PL
 lib/Sprocket.pm
 lib/Sprocket/AIO.pm
