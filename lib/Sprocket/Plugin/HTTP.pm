@@ -1,11 +1,10 @@
 package Sprocket::Plugin::HTTP;
 
-use Sprocket qw( Plugin );
+use Sprocket qw( Plugin AIO );
 use base 'Sprocket::Plugin';
 
 use POE qw( Filter::HTTPD Filter::Stream Wheel::ReadWrite Driver::SysRW );
 use HTTP::Response;
-use IO::AIO;
 use HTTP::Date;
 use HTTP::Status qw( status_message is_info RC_BAD_REQUEST );
 use Time::HiRes qw( time );
@@ -32,7 +31,6 @@ sub new {
         @_
     );
 }
-
 
 sub import {
     my $self = shift;

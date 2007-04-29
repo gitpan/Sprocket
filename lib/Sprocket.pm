@@ -3,7 +3,7 @@ package Sprocket;
 use strict;
 use warnings;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use Carp qw( croak );
 use Sprocket::Common;
@@ -114,7 +114,8 @@ sub new {
         type => $type,
     }, ref $class || $class );
     
-    die 'ListenPort not set, please a port to listen to' if ( $self->isa( 'Sprocket::Server' ) && !defined( $opts{listen_port} ) );
+    die 'ListenPort not set, please a port to listen to'
+        if ( $self->isa( 'Sprocket::Server' ) && !defined( $opts{listen_port} ) );
 
     if ( $opts{max_connections} ) {
         if ( HAS_BSD_RESOURCE ) {
@@ -142,10 +143,11 @@ sub new {
 sub _start {
     my ( $self, $kernel ) = @_[OBJECT, KERNEL];
 
-    Sprocket::AIO->new( parent_id => $self->{session_id} = $_[ SESSION ]->ID() );
+    $self->{session_id} = $_[ SESSION ]->ID();
 
     if ( $self->{opts}->{plugins} ) {
         foreach my $t ( @{ $self->{opts}->{plugins} } ) {
+            # convert CamelCase to camel_case
             $t = adjust_params($t);
             $self->add_plugin(
                 $t->{plugin},
@@ -190,7 +192,8 @@ sub _default {
     return $self->process_plugins( [ $cmd, $self, $con, @_[ ARG1 .. $#_ ] ] )
         if ( blessed( $con ) );
     
-    $self->_log(v => 1, msg => "_default called, no handler for event $cmd [$con] (the connection for this event may be gone)");
+    $self->_log(v => 1, msg => "_default called, no handler for event $cmd"
+        ." [$con] (the connection for this event may be gone)");
 }
 
 sub signals {
@@ -198,8 +201,8 @@ sub signals {
 
     $self->_log(v => 1, msg => "Client caught SIG$signal_name");
 
-    # to stop ctrl-c / INT
-    if ($signal_name eq 'INT') {
+    if ( $signal_name eq 'INT' ) {
+        # to stop ctrl-c / INT
         #$_[KERNEL]->sig_handled();
     } elsif ( $signal_name eq 'TSTP' ) {
         local $SIG{TSTP} = 'DEFAULT';
@@ -265,6 +268,7 @@ sub _log {
     my $l = $o{l} ? $o{l}+1 : 1;
     my $caller = $o{call} ? $o{call} : ( caller($l) )[3] || '?';
     $caller =~ s/^POE::Component/PoCo/o;
+    $caller =~ s/^Sprocket::Plugin/SPlugin/o;
     print STDERR '['.localtime()."][pid:$$][$self->{connections}][$caller][$sender] $o{msg}\n";
 }
 
@@ -285,8 +289,7 @@ sub cleanup_connection {
 
     return unless( $con );
     
-    my $wheel = $con->{wheel};
-    if ( $wheel ) {
+    if ( my $wheel = $con->{wheel} ) {
         $wheel->shutdown_input();
         $wheel->shutdown_output();
     }
@@ -421,6 +424,9 @@ sub add_plugin {
     
     $plugin->parent_id( $self->{session_id} );
     
+    $plugin->plugin_start_aio( $self, $pri )
+        if ( $plugin->can( 'plugin_start_aio' ) );
+
     $plugin->add_plugin( $self, $pri )
         if ( $plugin->can( 'add_plugin' ) );
     

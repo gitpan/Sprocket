@@ -1,5 +1,9 @@
 Revision history for Sprocket
 
+0.05 Sat Apr 28 2007
+    - dns prereq was wrong
+    - adjusted AIO semantics
+
 0.04 Thu Apr 26 2007
     - added poco dns as a prereq
     

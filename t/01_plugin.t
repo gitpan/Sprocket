@@ -141,8 +141,4 @@ sub remote_connect_error {
     Test::More::fail("remote connect error");
 }
 
-sub remote_error {
-    Test::More::fail("remote error");
-}
-
 1;

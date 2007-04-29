@@ -68,7 +68,7 @@ sub _startup {
 
     if ( $self->{opts}->{pre_fork} ) {
         $kernel->state( _dofork => $self );
-        $kernel->post( $session => '_dofork' );
+        $kernel->call( $session => '_dofork' );
     }
 }
 
