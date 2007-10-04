@@ -9,15 +9,28 @@ use POE qw(
     Driver::SysRW
     Component::Client::DNS
 );
-use Sprocket;
-use base qw( Sprocket );
+use Sprocket qw( Base );
+use base qw( Sprocket::Base );
 use Scalar::Util qw( dualvar );
+
+BEGIN {
+    $sprocket->register_hook( [qw(
+        sprocket.remote.connection.accept
+        sprocket.remote.connection.reject
+        sprocket.remote.connection.receive
+        sprocket.remote.address.resolved
+        sprocket.remote.wheel.error
+    )] );
+}
 
 sub spawn {
     my $class = shift;
     
     my $self = $class->SUPER::spawn(
-        $class->SUPER::new( @_, _type => 'remote' ),
+        $class->SUPER::new(
+            @_,
+            _type => 'remote'
+        ),
         qw(
             _startup
             _stop
@@ -34,72 +47,65 @@ sub spawn {
             resolved_address
 
             accept
+            reject
         )
     );
 
     return $self;
 }
 
-sub as_string {
-    __PACKAGE__;
+sub check_params {
+    my $self = shift;
+
+    $self->{name} ||= "Client";
+
+    return;
 }
 
 sub _startup {
-    my ( $kernel, $session, $self ) = @_[KERNEL, SESSION, OBJECT];
-
+    my ( $self, $kernel, $session ) = @_[ OBJECT, KERNEL, SESSION ];
+    
+    # XXX ok to doc
     $session->option( @{$self->{opts}->{client_session_options}} )
-        if ( $self->{opts}->{client_session_options} ); 
+        if ( $self->{opts}->{client_session_options} );
+    
+    # XXX don't doc yet
     $kernel->alias_set( $self->{opts}->{client_alias} )
         if ( $self->{opts}->{client_alias} );
     
-    $self->{name} ||= "Client";
-
-    $kernel->sig( INT => 'signals' );
-    
     # connect to our client list
-    if ( $self->{opts}->{client_list} ) {
-        if ( ref( $self->{opts}->{client_list} ) eq 'ARRAY' ) {
-            foreach ( @{$self->{opts}->{client_list}} ) {
-                ( ref( $_ ) eq 'ARRAY' ) ? $self->connect( @$_ ) : $self->connect( $_ );
-            }
-        } else {
-            warn "client list must be an array if defined at all";
-        }
+    foreach ( @{$self->{opts}->{client_list}} ) {
+        $self->connect( ref( $_ ) eq 'ARRAY' ? @$_ : $_ );
     }
 
-#    $kernel->refcount_increment( $self->{session_id} => "$self" );
+    return;
 }
 
 sub _stop {
-    my $self = $_[OBJECT];
-    $self->_log(v => 2, msg => $self->{name}." stopped.");
+    my $self = $_[ OBJECT ];
+    $self->_log( v => 2, msg => $self->{name}." stopped.");
 }
 
 sub remote_connect_success {
-    my ( $kernel, $self, $con, $socket ) = @_[KERNEL, OBJECT, HEAP, ARG0];
+    my ( $kernel, $self, $con, $socket ) = @_[ KERNEL, OBJECT, HEAP, ARG0 ];
     
     $con->peer_addr( $con->peer_ip.':'.$con->peer_port );
     
-    $self->_log(v => 3, msg => $self->{name}." connected");
+    $self->_log( v => 3, msg => $self->{name}." connected");
 
     if ( my $tid = $con->time_out_id ) {
         $kernel->alarm_remove( $tid );
         $con->time_out_id( undef );
     }
 
-    # keep this for accept
     $con->socket( $socket );
-    
     $self->process_plugins( [ 'remote_accept', $self, $con, $socket ] );
 
     return;
 }
 
 sub accept {
-    my ( $self, $kernel, $con, $opts ) = @_[ OBJECT, KERNEL, HEAP, ARG0 ];
-    
-    my $socket = $con->socket;
-    $con->socket( undef );
+    my ( $self, $con, $opts ) = @_[ OBJECT, HEAP, ARG0 ];
     
     $opts = {} unless ( $opts );
 
@@ -111,8 +117,11 @@ sub accept {
             POE::Filter::Stream->new(),
         ]
     );
-    $opts->{time_out} ||= $self->{opts}->{time_out};
+    $opts->{time_out} = $self->{opts}->{time_out}
+        unless( defined( $opts->{time_out} ) );
 
+    my $socket = $con->socket;
+    
     $con->wheel_readwrite(
         Handle          => $socket,
         Driver          => POE::Driver::SysRW->new( BlockSize => $opts->{block_size} ),
@@ -122,41 +131,80 @@ sub accept {
         FlushedEvent    => $con->event( 'remote_flushed' ),
     );
     
+    $sprocket->broadcast( 'sprocket.remote.connection.accept', {
+        source => $self,
+        target => $con,
+    } );
+    
+    $con->socket( undef );
+    
     $self->process_plugins( [ 'remote_connected', $self, $con, $socket ] );
 
     # nothing took the connection
-    $con->close() unless ( $con->plugin );
+    unless ( $con->plugin ) {
+        $self->_log( v => 2, msg => "No plugin took this connection, Dropping.");
+        $con->close();
+    }
+    
+    return;
+}
+
+sub reject {
+    my ( $self, $con ) = @_[ OBJECT, HEAP ];
+    
+    $sprocket->broadcast( 'sprocket.remote.connection.reject', {
+        source => $self,
+        target => $con,
+    } );
+    
+    # XXX other?
+    $con->socket( undef );
+    $con->close( 1 );
     
     return;
 }
 
 sub remote_connect_error {
-    my ( $kernel, $self, $con ) = @_[KERNEL, OBJECT, HEAP];
+    my ( $kernel, $self, $con, $operation, $errnum, $errstr ) = 
+        @_[ KERNEL, OBJECT, HEAP, ARG0, ARG1, ARG2 ];
 
-    $self->_log(v => 2, msg => $self->{name}." : Error connecting to ".$con->peer_addr." : $_[ARG0] error $_[ARG1] ($_[ARG2])");
+    $con->error( dualvar( $errnum, "$operation - $errstr" ) );
+
+    $self->_log( v => 2, msg => $self->{name}." : Error connecting to ".$con->peer_addr
+        ." : $operation error $errnum ($errstr)");
 
     if ( my $tid = $con->time_out_id ) {
         $kernel->alarm_remove( $tid );
         $con->time_out_id( undef );
     }
 
-    $self->process_plugins( [ 'remote_connect_error', $self, $con, @_[ ARG0 .. ARG2 ] ] );
+#    if ( $con->connected ) {
+        $self->process_plugins( [ 'remote_disconnected', $self, $con, @_[ ARG0 .. ARG2 ] ] );
+#    } else {
+#        $self->process_plugins( [ 'remote_connect_error', $self, $con ] );
+#    }
     
     return;
 }
 
 sub remote_connect_timeout {
-    my ( $kernel, $self, $con ) = @_[KERNEL, OBJECT, HEAP];
+    my $self = $_[ OBJECT ];
     
-    $self->_log(v => 2, msg => $self->{name}." : timeout while connecting");
+    $self->_log( v => 2, msg => $self->{name}." : timeout while connecting");
 
-    $self->process_plugins( [ 'remote_connect_timeout', $self, $con ] );
+    $self->process_plugins( [ 'remote_connect_error', $self, $_[ HEAP ] ] );
 
     return;
 }
 
 sub remote_receive {
-    my $self = $_[OBJECT];
+    my $self = $_[ OBJECT ];
+
+    $sprocket->broadcast( 'sprocket.remote.connection.receive', {
+        source => $self,
+        target => $_[ HEAP ],
+        data => $_[ ARG0 ],
+    } );
     
     $self->process_plugins( [ 'remote_receive', $self, @_[ HEAP, ARG0 ] ] );
     
@@ -164,14 +212,21 @@ sub remote_receive {
 }
 
 sub remote_error {
-    my ( $kernel, $self, $con, $operation, $errnum, $errstr ) = 
-        @_[ KERNEL, OBJECT, HEAP, ARG0, ARG1, ARG2 ];
+    my ( $self, $con, $operation, $errnum, $errstr ) = 
+        @_[ OBJECT, HEAP, ARG0, ARG1, ARG2 ];
     
     $con->error( dualvar( $errnum, "$operation - $errstr" ) );
     
     if ( $errnum != 0 ) {
-        $self->_log(v => 3, msg => $self->{name}." encountered $operation error $errnum: $errstr");
+        $self->_log( v => 3, msg => $self->{name}." encountered $operation error $errnum: $errstr");
     }
+    
+    $sprocket->broadcast( 'sprocket.remote.wheel.error', {
+        source => $self,
+        operation => $operation,
+        errnum => $errnum,
+        errstr => $errstr,
+    } );
     
     $self->process_plugins( [ 'remote_disconnected', $self, $con, 1, $operation, $errnum, $errstr ] );
     
@@ -196,9 +251,14 @@ sub connect {
     
     my ( $self, $kernel, $address, $port ) = @_[ OBJECT, KERNEL, ARG0, ARG1 ];
     
-    unless( defined $port ) {
-       ( $address, $port ) = ( $address =~ /^([^:]+):(\d+)$/ );
-    }
+    # support an array ref
+    ( $address, $port ) = @$address if ( ref( $address ) eq 'ARRAY' );
+    
+    ( $address, $port ) = ( $address =~ /^([^:]+):(\d+)$/ )
+        unless( defined $port );
+
+    return $self->_log( v => 1, msg => 'Port not defined in call to connect, IGNORED. address: '.$address )
+        unless ( defined $port );
     
     my $con;
 
@@ -250,38 +310,49 @@ sub resolved_address {
 
     unless ( defined $response_obj ) {
         $self->_log( v => 4, msg => 'resolution of '.$con->peer_hostname.' failed: '.$response_err  );
-        $self->process_plugins( [ 'remote_resolve_failed', $self, $con, $response_err, $response_obj ] );
+        $self->process_plugins( [ 'remote_connect_error', $self, $con, $response_err, $response_obj ] );
         return;
     }
 
     my @addr = map { $_->rdatastr } ( $response_obj->answer );
-
-    # pick a random ip
     my $peer_ip = $addr[ int rand( @addr ) ];
-    $self->_log( v => 4, msg => 'resolved '.$con->peer_hostname.' to '.join(',',@addr).' using: '.$peer_ip );
-
+    
     $con->peer_ips( \@addr );
-
+    
+    # pick a random ip
+    $self->_log( v => 4, msg => 'resolved '.$con->peer_hostname.' to '.join(',',@addr).' using: '.$peer_ip );
+    
     $con->peer_ip( $peer_ip );
     $con->peer_addr( $peer_ip.':'.$con->peer_port );
 
-    $self->reconnect( $con );
+    $sprocket->broadcast( 'sprocket.remote.address.resolved', {
+        source => $self,
+        addresses => \@addr,
+        response => $response_obj,
+        peer_ip => $peer_ip,
+    } );
+
+    $self->reconnect( $con, 1 );
 
     return;
 }
 
 sub reconnect {
+    my ( $self, $con, $noclose );
     unless ( $_[KERNEL] && ref $_[KERNEL] ) {
-        my ( $self, $con ) = @_;
+        ( $self, $con ) = ( shift, shift );
         return $poe_kernel->call( $self->{session_id} => $con->event( 'reconnect' ) => @_ );
     }
     
-    my ( $self, $con ) = @_[ OBJECT, HEAP ];
+    ( $self, $con, $noclose ) = @_[ OBJECT, HEAP, ARG0 ];
 
     # XXX include backoff?
 
     $con->connected( 0 );
-    $con->close( 1 );
+    
+    # this would force fused connections to shut each other down
+    # so $noclose is passed during a reconnect call, post address resolve
+    $con->close( 1 ) unless ( $noclose );
     
 #    $con->sf( undef );
 #    $con->wheel( undef );
@@ -305,6 +376,17 @@ sub reconnect {
     return $con;
 }
 
+sub begin_soft_shutdown {
+    my $self = $_[ OBJECT ];
+    
+    $self->_log( v => 2, msg => $self->{name}." is shuting down (soft)");
+
+    foreach ( values %{$self->{heaps}} ) {
+        next unless defined;
+        $self->process_plugins( [ 'remote_shutdown', $self, $_ ] );
+    }
+}
+
 1;
 
 __END__
@@ -318,8 +400,8 @@ Sprocket::Client - The Sprocket Client
     use Sprocket qw( Client );
     
     Sprocket::Client->spawn(
-        Name => 'My Client',
-        ClientList => [
+        Name => 'My Client',      # Optional, defaults to Client
+        ClientList => [           # Optional
             '127.0.0.1:9979',
         ],
         Plugins => [
@@ -329,7 +411,6 @@ Sprocket::Client - The Sprocket Client
             },
         ],
         LogLevel => 4,
-        MaxConnections => 10000,
     );
 
 
@@ -346,35 +427,89 @@ a server on a given IP and Port
 
 Create a new Sprocket::Client object. 
 
-=over 4 
+=over 4
 
-=item Name => (Str)
+=item Name => (str)
 
-The Name for this server. Must be unique.
+The Name for this server.  This is used for logging.  It is optional and
+defaults to 'Client'
 
-=item ClientList => (ArrayRef)
+=item ClientList => (array ref)
 
-A list of servers to connect to.
+A list of one or more servers to connect to.
 
-=item LogLevel => (Int)
+=item LogLevel => (int)
 
-The minimum level of logging, defaults to 4
+The minimum level of logging, defaults to 4.
 
-=item Plugins => (ArrayRef)
+=item Logger => (object)
 
-Plugins that this client will hand off processing to. In an ArrayRef of
-HashRefs format as so:
+L<Sprocket::Logger::Basic> is the default and logs to STDERR.  The object
+must support put( $server, { v => $level, msg => $msg } ) or wrap a logging
+system using this format.
+
+=item Plugins => (array ref of hash refs)
+
+Plugins that this client will hand off processing to. In an array ref of
+hash refs format as so:
 
     {
         plugin => MyPlugin->new(),
         priority => 0 # default
     }
 
+=item MaxConnections => (int)
+
+Sprocket will set the rlimit to this value using L<BSD::Resource>
+
 =back
 
-=item shutdown()
+=item connect( $address, $port ) or connect( "$address:$port" )
 
-Shutdown this server cleanly
+Connect to a remote host.
+
+=item get_connection( $id )
+
+Retrieves a connection by its id.
+
+=item shutdown( $type )
+
+Shutdown this client.  If $type is 'soft' then soft shutdown procedure will
+begin.  remote_shutdown will be called for each connection.
+
+=back
+
+=head1 ACCESSORS
+
+=over 4
+
+=item name
+
+The name of the client, specified during spawn.
+
+=item session_id
+
+Session id of the controlling poe session.
+
+=item uuid
+
+UUID of the client, generated during spawn.
+
+=item shutting_down
+
+returns the shutdown type, ie. 'soft' if shutting down, otherwize, undef.
+
+=item connections
+
+returns the number of connections
+
+=item _logger
+
+returns the logger object
+
+=item opts
+
+returns a hash ref of the options passed to spawn
 
 =back
 
@@ -388,20 +523,41 @@ These events are handled by plugins.  See L<Sprocket::Plugin>.
 
 =item remote_connected
 
-=item remote_recieve
+=item remote_receive
 
 =item remote_disconnected
 
 =item remote_connect_error
 
-=item remote_resolve_failed
+=item remote_time_out
+
+=item remote_shutdown
+
+=back
+
+=head1 HOOKS
+
+See L<Sprocket> for observer hook semantics.
+
+=over 4
+
+=item sprocket.remote.connection.accept
+
+=item sprocket.remote.connection.reject
+
+=item sprocket.remote.connection.receive
+
+=item sprocket.remote.address.resolved
+
+=item sprocket.remote.wheel.error
 
 =back
 
 =head1 SEE ALSO
 
 L<POE>, L<Sprocket>, L<Sprocket::Connection>, L<Sprocket::Plugin>,
-L<Sprocket::Server>
+L<Sprocket::Server>, L<Sprocket::Server::PreFork>, L<Sprocket::Server::UNIX>,
+L<Sprocket::Logger::Basic>, L<Sprocket::Logger::Log4perl>
 
 =head1 AUTHOR
 

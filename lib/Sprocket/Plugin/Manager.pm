@@ -3,13 +3,18 @@ package Sprocket::Plugin::Manager;
 use Sprocket qw( Plugin );
 use base 'Sprocket::Plugin';
 
-use POE;
 use POE::Filter::Line;
 use Data::Dumper;
 
-# TODO set a flag
 BEGIN {
     eval "use Devel::Gladiator";
+    # You can get it here:
+    # http://code.sixapart.com/svn/Devel-Gladiator/trunk/
+    if ( $@ ) {
+        eval 'sub HAS_GLADIATOR() { 0 }';
+    } else {
+        eval 'sub HAS_GLADIATOR() { 1 }';
+    }
 };
 
 use strict;
@@ -21,10 +26,6 @@ sub new {
         name => 'Manager',
         @_
     );
-}
-
-sub as_string {
-    __PACKAGE__;
 }
 
 # ---------------------------------------------------------
@@ -40,114 +41,126 @@ sub local_connected {
     
     $con->filter->shift(); # POE::Filter::Stream
     
-    $con->send( "Sprocket Manager - commands: dump [val], list conn, con dump [cid], find leaks(broken), find refs(broken), quit" );
-    
-    # XXX should we pop the stream filter off the top?
-
-    return 1;
+    $con->send( "Sprocket Manager" );
+    $con->call( cmd_help => [] );
 }
 
 sub local_receive {
     my ( $self, $server, $con, $data ) = @_;
     
-    $self->_log( v => 4, msg => "manager:".Data::Dumper->Dump([ $data ]));
+    #$self->_log( v => 4, msg => "manager:".Data::Dumper->Dump([ $data ]));
+    my ( $cmd, @args ) = split( /\s+/, $data );
     
-    if ( $data =~ m/^help/i ) {
-        $con->send( "commands: dump [val], list conn, con dump [cid], find leaks(broken), find refs(broken), quit" );
-    } elsif ( $data =~ m/^dump (.*)/i ) {
-        $con->send( eval "Data::Dumper->Dump([$1])" );
-    } elsif ( $data =~ m/^x 0x(\S+) (.*)/i ) {
-        my $c = $server->get_connection( $1 );
-        my $res = eval "$2";
-        $con->send( $res );
-        $con->send( $@ ) if ( $@ );
-    } elsif ( $data =~ m/^x (.*)/i ) {
-        my $res = eval "$1";
-        $con->send( $res );
-        $con->send( $@ ) if ( $@ );
-    } elsif ( $data =~ m/^list conn/i ) {
-        foreach my $p (@Sprocket::COMPONENTS) {
-            next unless ($p);
-            foreach my $c (values %{$p->{heaps}}) {
-                $con->send( $p->name." - $c - ".$c->peer_addr );
-            }
-        }
-        $con->send('done.');
-    } elsif ( $data =~ m/^con dump (\S+)/i ) {
-        my $id = $1;
-        $con->send('looking for '.$id);
-        LOOP: foreach my $p (@Sprocket::COMPONENTS) {
-            next unless ($p);
-            foreach my $c (values %{$p->{heaps}}) {
-                next unless ( lc( $c->ID ) eq $id );
-                $con->send( $p->name." - $c - ".Data::Dumper->Dump([$c]) );
-                last LOOP;
-            }
-        }
-    } elsif ( $data =~ m/^find leaks/i ) {
-        my $array = Devel::Gladiator::walk_arena();
-        foreach my $value (@$array) {
-            next unless ( ref($value) =~ m/Sprocket\:\:Connection/ );
-            my $found = undef;
-            foreach my $c (@Sprocket::COMPONENTS) {
-                next unless ($c);
-                $found = $c
-                    if (exists( $c->{heaps}->{$value->ID} ));
-            }
-            if ($found) {
-                #$con->send( "cometd connection: ".$value->ID." with plugin ".$value->plugin()." found in ".$found->name );
-            } else {
-                $con->send( "cometd connection: ".$value->ID." with plugin ".$value->plugin()." not found --- leaked!" );
-            }
-        }
-        $con->send( "done." );
-    } elsif ( $data =~ m/^find refs/i ) {
-        my $array = Devel::Gladiator::walk_arena();
-        foreach my $value (@$array) {
-            if ( ref($value) =~ m/Sprocket/ && ref($value) !~ m/Sprocket::Session/ ) {
-                $con->send( "obj: $value ".( $value->can( "name" ) ? $value->name : '' ));
-            }
-        }
-        $con->send( "done." );
-    } elsif ( $data =~ m/^devent (\S+) (.*)/i ) {
-        my ($ch, $data) = ($1,$2);
-        require JSON;
-        eval {
-            $data = ( $data =~ m/^\{/ ) ? jsonToObj( $data ) : { text => $data };
-        };
-        if ($@) {
-            $con->send( "error (event not sent): $@" );
-            return;
-        }
-        eval "use Sprocket::Event;";
-        my $event = eval "new Sprocket::Event( channel => $ch, data => $data )";
-        $poe_kernel->call( $self->{event_manager} => deliver_event => $event );
-        $con->send( "sent ".$event->as_string );
-    } elsif ( $data =~ m/^add channel (\S+) (.*)/i ) {
-        my ($clid, $ch) = ($1, $2);
-        $poe_kernel->call( $self->{event_manager} => add_channels => $clid => $ch );
-        $con->send( "sent adding $ch to $clid" );
-    } elsif ( $data =~ m/^sql (.*)/i ) {
-        $poe_kernel->call( $self->{event_manager} => db_do => $1 => sub {
-            $con->send( "response: ".Data::Dumper->Dump([ shift ]) );
-        } );
-        $con->send( "sent $1 to $self->{event_manager}" );
-    } elsif ( $data =~ m/^(select .*)/i ) {
-        $poe_kernel->call( $self->{event_manager} => db_select => $1 => sub {
-            $con->send( "response: ".Data::Dumper->Dump([ shift ]) );
-        } );
-        $con->send( "sent $1 to $self->{event_manager}" );
-    } elsif ( $data =~ m/^events (\S+)/i ) {
-        $poe_kernel->call( $self->{event_manager} => get_events => $1 => sub {
-            $con->send( "response: ".Data::Dumper->Dump([ shift ]) );
-        } );
-        $con->send( "requesting events for $1" );
-    } elsif ( $data =~ m/^quit/i ) {
-        $con->send( "goodbye." );
-        $con->close();
+    if ( $self->can( "cmd_$cmd" ) ) {
+        $con->call( "cmd_$cmd" => \@args );
+        $con->send( "command finished." );
+    } else {
+        $con->send( "unknown command.  Need 'help'?" );
     }
     
     return 1;
 }
 
+sub cmd_help {
+    my ( $self, $server, $con, $args ) = @_;
+    
+    $con->send( "commands: dump [val], list_conn, con_dump [cid], find_leaks, find_refs, quit" );
+    if ( $args->[0] ) {
+        $con->send( "no detailed info for  $args->[0]" );
+    }
+}
+
+sub cmd_dump {
+    my ( $self, $server, $con, $args ) = @_;
+    
+    $con->send( eval "Data::Dumper->Dump([$args->[0]])" );
+}
+
+sub cmd_x {
+    my ( $self, $server, $con, $args ) = @_;
+    
+    if ( $args->[0] =~ m/^0x(\S+)/i ) {
+        my $c = $server->get_connection( $1 );
+        my $res = eval "$args->[1]";
+        $con->send( $res );
+        $con->send( $@ ) if ( $@ );
+    } else {
+        my $res = eval "$args->[0]";
+        $con->send( $res );
+        $con->send( $@ ) if ( $@ );
+    }
+}
+
+sub cmd_list_conn {
+    my ( $self, $server, $con, $args ) = @_;
+    
+    foreach my $p ( @{ $sprocket->get_components } ) {
+        next unless ( $p );
+        foreach my $c ( values %{$p->{heaps}} ) {
+            $con->send( $p->name." - $c - ".$c->peer_addr );
+        }
+    }
+}
+
+sub cmd_con_dump {
+    my ( $self, $server, $con, $args ) = @_;
+    
+    return $con->send( "con_dump <id>" )
+        unless ( @$args );
+    
+    $con->send('looking for '.$args->[0]);
+    LOOP: foreach my $p ( @{ $sprocket->get_components } ) {
+        next unless ( $p );
+        foreach my $c ( values %{$p->{heaps}} ) {
+            next unless ( lc( $c->ID ) eq $args->[0] );
+            $con->send( $p->name." - $c - ".Data::Dumper->Dump([ $c ]) );
+            last LOOP;
+        }
+    }
+}
+
+sub cmd_find_leaks {
+    my ( $self, $server, $con, $args ) = @_;
+    
+    return $con->send( "Devel::Gladiator not installed: http://code.sixapart.com/svn/Devel-Gladiator/trunk/" )
+        unless ( HAS_GLADIATOR );
+
+    my $array = Devel::Gladiator::walk_arena();
+    for my $i ( 0 .. $#{$array} ) {
+        next unless ( ref($array->[$i]) =~ m/^Sprocket\:\:Connection/ );
+        my $found = undef;
+        foreach my $c ( @{ $sprocket->get_components } ) {
+            next unless ( $c );
+            $found = $c
+                if ( exists( $c->{heaps}->{$array->[$i]->ID} ) );
+        }
+        if ($found) {
+            #$con->send( "cometd connection: ".$array->[$i]->ID." with plugin ".$array->[$i]->plugin()." found in ".$found->name );
+        } else {
+            $con->send( "cometd connection: ".$array->[$i]->ID." with plugin ".$array->[$i]->plugin()." not found --- leaked!" );
+        }
+    }
+}
+
+sub cmd_find_refs {
+    my ( $self, $server, $con, $args ) = @_;
+
+    return $con->send( "Devel::Gladiator not installed http://code.sixapart.com/svn/Devel-Gladiator/trunk/" )
+        unless ( HAS_GLADIATOR );
+
+    my $array = Devel::Gladiator::walk_arena();
+    for my $i ( 0 .. $#{$array} ) {
+        if ( ref($array->[$i]) =~ m/^Sprocket/ && ref($array->[$i]) !~ m/^Sprocket::Session/ ) {
+            $con->send( "obj: $array->[$i] ".( $array->[$i]->can( "name" ) ? $array->[$i]->name : '' ));
+        }
+    }
+}
+
+sub cmd_quit {
+    my ( $self, $server, $con, $args ) = @_;
+    
+    $con->send( "goodbye." );
+    $con->close();
+}
+    
 1;

@@ -10,51 +10,83 @@ use Test::More 'no_plan';
 BEGIN {
     use_ok 'POE';
     use_ok 'Sprocket';
-    use_ok 'Sprocket::Client';
     use_ok 'Sprocket::Server';
-    use_ok 'POE::Filter::Line';
+    use_ok 'Sprocket::Client';
 }
 
-my %opts = (
-    LogLevel => 1,
-    TimeOut => 0,
-);
 
-my @template = (
-    'test1',
-    'test2',
-    'test3',
-    'test4',
-);
+POE::Session->create( inline_states => {
+    _start => sub {
+        $sprocket->attach_hook( [qw(
+            sprocket.remote.connection.accept
+            sprocket.remote.connection.receive
+            sprocket.remote.wheel.error
+            sprocket.local.connection.accept
+            sprocket.local.connection.receive
+            sprocket.local.wheel.error
+            sprocket.shutdown
+        )], $sprocket->callback( $_[SESSION] => 'handle_callback' ) );
+        
+        $poe_kernel->delay( shutdown => 10 => 1 );
+        $poe_kernel->alias_set( 'test' );
 
-my $srv = Sprocket::Server->spawn(
-    %opts,
-    Name => 'Test Server',
-    ListenPort => 0,
-    ListenAddress => '127.0.0.1',
-    Plugins => [
-        {
-            plugin => Sprocket::Plugin::Test->new(
-                template => [ @template ],
-            ),
-        },
-    ],
-);
-
-Sprocket::Client->spawn(
-    %opts,
-    Name => 'Test Client',
-    ClientList => [
-        '127.0.0.1:'.$srv->listen_port,
-    ],
-    Plugins => [
-        {
-            plugin => Sprocket::Plugin::Test->new(
-                template => [ @template ],
-            ),
-        },
-    ],
-);
+        my %opts = (
+            LogLevel => 1,
+            TimeOut => 0,
+        );
+        
+        my @template = (
+            'test1',
+            'test2',
+            'test3',
+            'test4',
+        );
+        
+        my $srv = Sprocket::Server->spawn(
+            %opts,
+            Name => 'Test Server',
+            ListenPort => 0,
+            ListenAddress => '127.0.0.1',
+            Plugins => [
+                {
+                    plugin => Sprocket::Plugin::Test->new(
+                        template => [ @template ],
+                    ),
+                },
+            ],
+        );
+        
+        Sprocket::Client->spawn(
+            %opts,
+            Name => 'Test Client',
+            ClientList => [
+                '127.0.0.1:'.$srv->listen_port,
+            ],
+            Plugins => [
+                {
+                    plugin => Sprocket::Plugin::Test->new(
+                        template => [ @template ],
+                    ),
+                },
+            ],
+        );
+    },
+    handle_callback => sub {
+        my $event = $_[ARG0];
+        Test::More::pass("callback ".$event->hook);
+        $poe_kernel->yield( 'shutdown' )
+            if ( $event->hook eq 'sprocket.shutdown' );
+    },
+    shutdown => sub {
+        my $failed = $_[ ARG0 ];
+        Test::More::fail("test failed")
+            if ( $failed );
+        $poe_kernel->alias_remove( 'test' );
+        $poe_kernel->alarm_remove_all();
+        delete $_[HEAP]->{cb};
+        return;
+    },
+} );
 
 $poe_kernel->run();
 

@@ -8,10 +8,15 @@ use base qw( Class::Accessor::Fast );
 
 use Scalar::Util qw( weaken );
 
+use overload '""' => sub {
+    my $self = shift;
+    my $id = $self->ID();
+    return $id ? __PACKAGE__.'/'.$id : $self;
+};
+
 __PACKAGE__->mk_accessors( qw(
     sf
     wheel
-    socket
     connected
     close_on_flush
     error
@@ -32,9 +37,10 @@ __PACKAGE__->mk_accessors( qw(
     time_out
     time_out_id
     ID
+    ssl
+    x
+    socket
 ) );
-
-our %callback_ids;
 
 sub new {
     my $class = shift;
@@ -61,7 +67,9 @@ sub new {
         peer_ips => [],
         socket => undef,
         error => undef,
-        time_out_id => undef,
+        time_out_id => undef, # use for client connections
+        ssl => undef,
+        x => {},
         @_
     }, ref $class || $class );
 
@@ -77,9 +85,7 @@ sub new {
 }
 
 sub event {
-    my ( $self, $event ) = @_;
-
-    return $self->ID.'/'.$event;
+    return $_[ 0 ]->ID.'/'.$_[ 1 ];
 }
 
 sub socket_factory {
@@ -131,12 +137,17 @@ sub filter_out {
 sub send {
     my $self = shift;
 
+    unless ( $self->connected ) {
+        $self->_log( v => 1, msg => "cannot send data. not connected, or disconnecting after flush" );
+        return;
+    }
+
     if ( my $wheel = $self->wheel ) {
         $self->active();
         return $wheel->put(@_);
     } else {
         # XXX does this happen
-        $self->_log( v => 1, msg => "cannot send data, where did my wheel go?!".
+        $self->_log( v => 1, msg => "cannot send data. where did my wheel go?! !EMAIL XANTUS! ".
             ( $self->error ? $self->error : '' ) );
     }
 }
@@ -155,7 +166,7 @@ sub alarm_set {
     
     $self->active();
 
-    my $id = $poe_kernel->alarm_set( $event => @_ );
+    my $id = $poe_kernel->call( $self->parent_id => call_in_ses_context => alarm_set => $event => @_ );
     $self->{alarms}->{ $id } = $event;
 
     return $id;
@@ -166,7 +177,7 @@ sub alarm_adjust {
     
     $self->active();
 
-    $poe_kernel->alarm_adjust( @_ );
+    $poe_kernel->call( $self->parent_id => call_in_ses_context => alarm_adjust => @_ );
 }
 
 sub alarm_remove {
@@ -176,8 +187,8 @@ sub alarm_remove {
     $self->active();
     
     # XXX exists
-    delete $self->{alarms}{ $id };
-    $poe_kernel->alarm_remove( $id => @_ );
+    delete $self->{alarms}->{ $id };
+    $poe_kernel->call( $self->parent_id => call_in_ses_context => alarm_remove => $id => @_ );
 }
 
 sub alarm_remove_all {
@@ -187,7 +198,7 @@ sub alarm_remove_all {
 
     foreach ( keys %{$self->{alarms}} ) {
         $self->_log( v => 4, "removed alarm $_ for client" );
-        $poe_kernel->alarm_remove( $_ );
+        $poe_kernel->call( $self->parent_id => call_in_ses_context => alarm_remove => $_ );
     }
 
     return;
@@ -198,7 +209,7 @@ sub delay_set {
     
     $self->active();
 
-    $poe_kernel->delay_set( $self->event( shift ) => @_ );
+    $poe_kernel->call( $self->parent_id => call_in_ses_context => delay_set => $self->event( shift ) => @_ );
 }
 
 sub delay_adjust {
@@ -206,7 +217,7 @@ sub delay_adjust {
     
     $self->active();
 
-    $poe_kernel->delay_adjust( @_ );
+    $poe_kernel->call( $self->parent_id => call_in_ses_context => delay_adjust => @_ );
 }
 
 sub yield {
@@ -229,7 +240,9 @@ sub post {
     my $self = shift;
     
     $self->active();
-
+    
+    # XXX instead?
+    #poe_kernel->call( $self->parent_id => call_in_ses_context => post => @_ );
     $poe_kernel->post( @_ );
 }
 
@@ -262,7 +275,9 @@ sub accept {
 sub reject {
     my $self = shift;
     
-    $self->close( 1 );
+    $self->connected( 0 );
+    
+    $poe_kernel->call( $self->parent_id => $self->event( 'reject' ) => @_ );
 }
 
 sub close {
@@ -282,7 +297,6 @@ sub close {
             $wheel->shutdown_output();
         }
     }
-    
     $self->wheel( undef ) if ( $force );
 
     $self->time_out( undef );
@@ -292,14 +306,18 @@ sub close {
    
     # socket is only here during the accept phase
     if ( my $socket = $self->socket ) {
-        close( $socket );
+        eval {
+           close( $socket );
+        };
     }
-    $self->socket( undef );
 
     # fused sockets closes its peer
     if ( my $con = $self->fused() ) {
-        $con->close( $force );
+        # avoid a loop by removing the fusion first
+        $con->fused( undef );
         $self->fused( undef );
+        # then close
+        $con->close( $force );
     }
 
     if ( $self->connected ) {
@@ -338,44 +356,37 @@ sub callback {
     
     $self->active();
 
-    my $id = $self->parent_id;
-    $event = $self->event( $event );
-
-    my $callback = Sprocket::Connection::AnonCallback->new(sub {
-        $poe_kernel->call( $id => $event => @etc => @_ );
-    });
-
-    $callback_ids{$callback} = $id;
-
-    $poe_kernel->refcount_increment( $id, 'anon_event' );
-
-    return $callback;
+    return $sprocket->callback( $self->parent_id => $self->event( $event ) => @etc );
 }
 
 sub postback {
     my ($self, $event, @etc) = @_;
 
     $self->active();
-    
-    my $id = $self->parent_id;
-    $event = $self->event( $event );
 
-    my $postback = Sprocket::Connection::AnonCallback->new(sub {
-        $poe_kernel->post( $id => $event => @etc => @_ );
-        return 0;
-    });
-
-    $callback_ids{$postback} = $id;
-
-    $poe_kernel->refcount_increment( $id, 'anon_event' );
-
-    return $postback;
+    return $sprocket->postback( $self->parent_id => $self->event( $event ) => @etc );
 }
 
 sub _log {
     my $self = shift;
 
     $poe_kernel->call( $self->parent_id => _log => ( l => 1, @_ ) );
+}
+
+# XXX not used yet
+sub aio_sendfile {
+    my ( $self, $in_fh, $in_offset, $length, $callback ) = @_;
+
+    $self->active();
+    
+    $self->wheel->pause_output();
+    $self->wheel->pause_input();
+
+    return aio_sendfile( $self->socket, $in_fh, $in_offset, $length, sub {
+        $self->wheel->resume_output();
+        $self->wheel->resume_input();
+        return $callback->( @_ );
+    } );
 }
 
 # Danga::Socket type compat
@@ -441,31 +452,6 @@ sub DESTROY {
 
 1;
 
-package Sprocket::Connection::AnonCallback;
-
-use POE;
-
-sub new {
-    my $class = shift;
-
-    bless( shift, $class );
-}
-
-sub DESTROY {
-    my $self = shift;
-    my $parent_id = delete $Sprocket::Connection::callback_ids{"$self"};
-
-    if ( defined $parent_id ) {
-        $poe_kernel->refcount_decrement( $parent_id, 'anon_event' );
-    } else {
-        warn "connection callback DESTROY without session_id to refcount_decrement";
-    }
-
-    return;
-}
-
-1;
-
 __END__
 
 =pod
@@ -499,10 +485,6 @@ Send data to the connected peer.  This is the same as a L<POE::Wheel> put()
 =item write( $data )
 
 Same as send, whichever you prefer.
-
-=item set_time_out( $seconds )
-
-Set the idle disconnect time in seconds.  
 
 =item alarm_set( $event, $epoch_time, @etc )
 
@@ -552,21 +534,21 @@ Reject a connection during the accept phase.
 
 =item close( $force )
 
-Close a connection after all data is flused, unless $force is defined
+Close a connection after all data is flushed, unless $force is defined
 then the connection is closed immediately.
 
 =item reconnect()
 
-Reconnect to a client.
+Reconnect to the same destination.
 
 =item get_driver_out_octets()
 
-Returns the number of octets are left to write to the client.
+Returns the number of octets that haven't been written to the peer connection.
 See L<POE::Wheel::ReadWrite>.
 
 =item active()
 
-Update the connection's active time, to keep it from timing out.
+Update the connection's active time to keep it from timing out.
 (If a timeout is set)
 
 =item callback( $event, @etc )
@@ -581,7 +563,7 @@ event() for you.  Extra params (@etc) are optional.
 
 =item time_out( $seconds )
 
-Set the idle disconnection time.  Set to undef to disable.
+Set the idle disconnect time.  Set to undef to disable.
 
 =back
 
@@ -657,11 +639,19 @@ Local port for this connection.
 
 =item state
 
-Current conneciton state name.  One of the L<Sprocket::Plugin> event method names.
+Current or last conneciton state name.  One of the L<Sprocket::Plugin> event
+method names.
 
 =item ID
 
-The connection's ID
+The connection's ID.  The connection object stringifies to Sprocket::Connection/$ID
+
+=item x
+
+A hash ref stash for plugins to store information, to avoid polluting $con's own
+hash ref.  Easily used like so: $con->x->{foo}
+
+=back
 
 =head1 SEE ALSO
 

@@ -1,3 +1,7 @@
+#
+#
+# vim: syntax=perl
+
 use warnings;
 use strict;
 
@@ -12,13 +16,13 @@ BEGIN {
 
 my %opts = (
     LogLevel => 1,
-    TimeOut => 0,
+    TimeOut => 15,
 );
 
-Sprocket::Server->spawn(
+my $srv = Sprocket::Server->spawn(
     %opts,
     Name => 'Test Server',
-    ListenPort => 9979,
+    ListenPort => 0,
     ListenAddress => '127.0.0.1',
     Plugins => [
         {
@@ -31,7 +35,7 @@ Sprocket::Client->spawn(
     %opts,
     Name => 'Test Client',
     ClientList => [
-        '127.0.0.1:9979',
+        '127.0.0.1:'.$srv->listen_port,
     ],
     Plugins => [
         {
@@ -61,10 +65,6 @@ sub new {
     );
 }
 
-sub as_string {
-    __PACKAGE__;
-}
-
 # ---------------------------------------------------------
 # server
 
@@ -74,31 +74,38 @@ sub local_connected {
     $self->take_connection( $con );
     # POE::Filter::Stackable object:
     $con->filter->push( POE::Filter::Line->new() );
-    Test::More::pass("connected, sending test");
+    Test::More::pass('connected, sending test');
     
     $con->send( "Test!" );
-
-    return 1;
 }
 
 sub local_receive {
     my ( $self, $server, $con, $data ) = @_;
     
     if ( $data =~ m/^Test!/i ) {
-        $con->send( "quit" );
-        Test::More::pass("received test, sending quit");
+        $con->send( 'quit' );
+        $con->postback( chain_quit => $con->callback( 'send_quit' ) )->();
+        Test::More::pass('received test, sending quit');
     } elsif ( $data =~ m/^quit/i ) {
-        $con->send( "goodbye." );
-        Test::More::pass("received quit, closing connection");
+        $con->send( 'goodbye.' );
+        Test::More::pass('received quit, closing connection');
         $con->close();
     }
-    
-    return 1;
+}
+
+sub chain_quit {
+    my ( $self, $server, $con, $cb ) = @_;
+    $cb->();
+}
+
+sub send_quit {
+    my ( $self, $server, $con ) = @_;
+    $con->send( 'quit' );
 }
 
 sub local_disconnected {
     my ( $self, $server, $con, $error ) = @_;
-    Test::More::pass("local disconnected");
+    Test::More::pass('local disconnected');
     $server->shutdown();
 }
 
@@ -111,34 +118,41 @@ sub remote_connected {
     $self->take_connection( $con );
     # POE::Filter::Stackable object:
     $con->filter->push( POE::Filter::Line->new() );
-    
-    return 1;
 }
 
 sub remote_receive {
     my ( $self, $client, $con, $data ) = @_;
     
     if ( $data =~ m/^Test!/i ) {
-        Test::More::pass("received test, sending test");
-        $con->send( "Test!" );
+        Test::More::pass('received test, sending test');
+        $con->postback( 'send_test' )->();
     } elsif ( $data =~ m/^quit/i ) {
-        Test::More::pass("received quit, closing connection");
+        Test::More::pass('received quit, closing connection');
         $con->close();
     }
 }
 
+sub send_test{
+    my ( $self, $client, $con ) = @_;
+    $con->send( "Test!" );
+}
+
 sub remote_disconnected {
     my ( $self, $client, $con, $error ) = @_;
-    Test::More::pass("remote disconnected");
+    Test::More::pass('remote disconnected');
     $client->shutdown();
 }
 
-sub remote_connect_timeout {
+sub remote_time_out {
+    my ( $self, $client, $con, $error ) = @_;
     Test::More::fail("remote connect timeout");
+    $client->shutdown();
 }
 
 sub remote_connect_error {
-    Test::More::fail("remote connect error");
+    my ( $self, $client, $con, $error ) = @_;
+    Test::More::fail("remote connect failed");
+    $client->shutdown();
 }
 
 1;

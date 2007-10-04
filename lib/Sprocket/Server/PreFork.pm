@@ -5,28 +5,36 @@ use warnings;
 
 use POE;
 use Sprocket qw( Server AIO );
+use Sprocket::Common qw( super_event );
 use base qw( Sprocket::Server );
+
+our $sprocket_aio;
 
 sub spawn {
     my $class = shift;
    
-    my $self = $class->SUPER::spawn(
-        @_,
-        PreFork => 1,
-    );
+    my $self = $class->SUPER::spawn( @_ );
 
     # 1 parent + 1 child
     $self->{opts}->{processes} ||= 2;
+
+    # time to retry fork after failure
+    # XXX undocumented
+    $self->{opts}->{fork_fail_delay} ||= 2;
     
-    # defaults
     $self->{is_child} = 0;
     $self->{children} = {};
+    $self->{is_forked} = 1;
 
     return $self;
 }
 
-sub as_string {
-    __PACKAGE__;
+sub _startup {
+    # call _startup in Sprocket::Server first
+    my ( $self, $kernel, $session ) = ( &super_event )[ OBJECT, KERNEL, SESSION ];
+
+    $kernel->state( _dofork => $self );
+    $kernel->call( $session => '_dofork' );
 }
 
 sub _dofork {
@@ -41,7 +49,7 @@ sub _dofork {
 
         unless ( defined( $pid ) ) {
             $self->_log(v => 2, msg => "forked failed $!");
-            $kernel->delay( _dofork => 1 );
+            $kernel->delay( _dofork => $self->{opts}->{fork_fail_delay} );
             return;
         }
 
@@ -58,9 +66,9 @@ sub _dofork {
         $self->{children} = {};
         $self->{heaps} = {};
         $self->{connections} = 0;
+
         # restart AIO in the child
-        Sprocket::AIO->new()->restart()
-            if ( $self->{aio} );
+        $sprocket_aio->restart() if ( $sprocket_aio );
         return;
     }
 
@@ -87,7 +95,7 @@ Sprocket::Server::PreFork - The PreForking Sprocket Server
     
     Sprocket::Server::PreFork->spawn(
         Name => 'Test Server',
-        ListenAddress => '127.0.0.1', # Defaults to 0.0.0.0
+        ListenAddress => '127.0.0.1', # Defaults to INADDR_ANY
         ListenPort => 9979,           # Defaults to random port
         Plugins => [
             {
@@ -113,7 +121,7 @@ Processes => (Int).  It will fork 3 additional processes to total 4.
 =head1 SEE ALSO
 
 L<POE>, L<Sprocket>, L<Sprocket::Connection>, L<Sprocket::Plugin>,
-L<Sprocket::Client>
+L<Sprocket::Client>, L<Sprocket::Server>
 
 =head1 AUTHOR
 

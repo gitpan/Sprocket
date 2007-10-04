@@ -7,8 +7,8 @@ use Carp qw( croak );
 use strict;
 use warnings;
 
-use overload '""' => sub { shift->as_string(); };
-
+our $sprocket_aio;
+    
 BEGIN {
     eval "use IO::AIO qw( poll_fileno poll_cb 2 )";
     if ( $@ ) {
@@ -19,31 +19,44 @@ BEGIN {
     }
 }
 
-our $singleton;
-
 sub import {
-    return unless ( HAS_AIO );
-
-    my $self = shift;
+    my ( $class, $args ) = @_;
     my $package = caller();
+    
+    croak "Sprocket::AIO expects its arguments in a hash ref"
+        if ( $args && ref( $args ) ne 'HASH' );
 
+    unless ( delete $args->{no_auto_export} ) {
+        {
+            no strict 'refs';
+            *{ $package . '::sprocket_aio' } = \$sprocket_aio;
+        }
+    }
+
+    return if ( delete $args->{no_auto_bootstrap} );
+
+    # bootstrap
     my $code = "package $package; use IO::AIO 2; sub plugin_start_aio { Sprocket::AIO->new( parent_id => shift->parent_id ); }";
     eval( $code );
     croak "could not import AIO into $package : $@"
         if ( $@ );
+    
+    return;
 }
 
 sub new {
     my $class = shift;
-    return $singleton if ( $singleton );
+    return $sprocket_aio if ( $sprocket_aio );
     
-    my $self = $singleton = bless({
+    return undef unless ( HAS_AIO );
+
+    my $self = $sprocket_aio = bless({
         session_id => undef,
         @_,
         pid => $$,
     }, ref $class || $class );
 
-    return $self unless ( HAS_AIO && $self->{parent_id} );
+    return $self unless ( $self->{parent_id} );
 
     POE::Session->create(
         object_states =>  [
@@ -62,16 +75,13 @@ sub new {
     return $self;
 }
 
-sub as_string {
-    __PACKAGE__;
-}
-
 sub _start {
     my ( $self, $kernel, $session ) = @_[ OBJECT, KERNEL, SESSION ];
     
     $self->{session_id} = $session->ID();
     $kernel->alias_set( "$self" );
     $kernel->call( $session => 'watch_aio' );
+    # XXX ugly
     $kernel->delay_set( watch_fork => 1 );
     
     $self->_log( v => 2, msg => 'AIO support module started' );
@@ -125,7 +135,7 @@ sub _shutdown {
     $kernel->alias_remove( "$self" );
     $kernel->alarm_remove_all();
     $kernel->select_read( delete $self->{fh} );
-    $singleton = undef;
+    $sprocket_aio = undef;
 
     return;
 }

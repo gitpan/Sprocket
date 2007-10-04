@@ -2,9 +2,15 @@ package Sprocket::Common;
 
 use strict;
 use warnings;
+use Data::UUID;
 
 our %hex_chr;
 our %chr_hex;
+our $super_event = 'sub super_event {'
+    . 'my $self = shift; my $caller = ( caller( 1 ) )[ 3 ];'
+    . '$caller =~ s/.*::(.+)$/$1/; $caller= "SUPER::$caller";'
+    . 'my $ret = $self->$caller( @_ ); unshift( @_, $self );'
+    . 'push( @_, $ret ); return @_; }';
 
 BEGIN {
     for ( 0 .. 255 ) {
@@ -15,22 +21,30 @@ BEGIN {
     }
 }
 
-
 sub import {
-    my $class = shift;
+    my ( $class, $args ) = @_;
     my $package = caller();
 
     my @exports = qw(
         uri_unescape
         uri_escape
         adjust_params
+        gen_uuid
+        new_uuid
     );
 
     push( @exports, @_ ) if ( @_ );
     
     no strict 'refs';
     foreach my $sub ( @exports ) {
-        *{ $package . '::' . $sub } = \&$sub;
+        if ( $sub eq 'super_event' ) {
+            # XXX We must define this sub in the class because it uses SUPER
+            # I don't know of any other way to do this, yet.
+            eval ( "package $package;" . $super_event )
+                if ( !defined *{ $package . '::super_event' } );
+        } else {
+            *{ $package . '::' . $sub } = \&$sub;
+        }
     }
 }
 
@@ -65,10 +79,20 @@ sub adjust_params {
     foreach my $k ( keys %$o ) {
         local $_ = "$k";
         s/([A-Z][a-z]+)/lc($1)."_"/ge; s/_$//;
-        $o->{$_} = delete $o->{$k};
+        $o->{+lc} = delete $o->{$k};
     }
     return wantarray ? %$o : $o;
 }
 
+sub gen_uuid {
+    my $from = shift;
+    my $u = Data::UUID->new();
+    my $uuid = $u->create_from_name( "cc.sprocket", "$from" );
+    return lc( $u->to_string( $uuid ) );
+}
+
+sub new_uuid {
+    return lc( new Data::UUID->create_str() );
+}
 
 1;

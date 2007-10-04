@@ -89,32 +89,32 @@ sub _invoke_state {
         if ( $method eq POE::Session::EN_DEFAULT ) {
           $method = POE::Session::EN_DEFAULT;
           $ret =
-          $object->$method(                 # package/object (implied)
-            $self,                          # session
-            $POE::Kernel::poe_kernel,       # kernel
-            $object->{heap},                # heap
-            $nstate,                        # state
-            $source_session,                # sender
-            undef,                          # unused #6
-            $file,                          # caller file name
-            $line,                          # caller file line
-            $fromstate,                     # caller state
-            $nstate,                           # original event
-            @{$etc->[1]}                    # args
+          $object->$method(           # package/object (implied)
+            $self,                    # session
+            $POE::Kernel::poe_kernel, # kernel
+            $object->{heap},          # heap
+            $nstate,                  # state
+            $source_session,          # sender
+            undef,                    # unused #6
+            $file,                    # caller file name
+            $line,                    # caller file line
+            $fromstate,               # caller state
+            $nstate,                  # original event
+            @{$etc->[1]}              # args
           );
         } else {
           $ret =
-          $object->$method(                 # package/object (implied)
-            $self,                          # session
-            $POE::Kernel::poe_kernel,       # kernel
-            $object->{heap},                # heap
-            $nstate,                        # state
-            $source_session,                # sender
-            undef,                          # unused #6
-            $file,                          # caller file name
-            $line,                          # caller file line
-            $fromstate,                     # caller state
-            @{$etc->[1]}                    # args
+          $object->$method(           # package/object (implied)
+            $self,                    # session
+            $POE::Kernel::poe_kernel, # kernel
+            $object->{heap},          # heap
+            $nstate,                  # state
+            $source_session,          # sender
+            undef,                    # unused #6
+            $file,                    # caller file name
+            $line,                    # caller file line
+            $fromstate,               # caller state
+            @{$etc->[1]}              # args
           );
         }
         $object->{heap} = undef;
@@ -128,34 +128,34 @@ sub _invoke_state {
 
   if (ref($self->[POE::Session::SE_STATES]->{$state}) eq 'CODE') {
     return $self->[POE::Session::SE_STATES]->{$state}->
-      ( undef,                          # object
-        $self,                          # session
-        $POE::Kernel::poe_kernel,       # kernel
-        $self->[POE::Session::SE_NAMESPACE],          # heap
-        $state,                         # state
-        $source_session,                # sender
-        undef,                          # unused #6
-        $file,                          # caller file name
-        $line,                          # caller file line
-        $fromstate,                     # caller state
-        @$etc                           # args
+      ( undef,                               # object
+        $self,                               # session
+        $POE::Kernel::poe_kernel,            # kernel
+        $self->[POE::Session::SE_NAMESPACE], # heap
+        $state,                              # state
+        $source_session,                     # sender
+        undef,                               # unused #6
+        $file,                               # caller file name
+        $line,                               # caller file line
+        $fromstate,                          # caller state
+        @$etc                                # args
       );
   }
 
 
   my ($object, $method) = @{$self->[POE::Session::SE_STATES]->{$state}};
   return
-    $object->$method                    # package/object (implied)
-      ( $self,                          # session
-        $POE::Kernel::poe_kernel,       # kernel
-        $self->[POE::Session::SE_NAMESPACE],          # heap
-        $state,                         # state
-        $source_session,                # sender
-        undef,                          # unused #6
-        $file,                          # caller file name
-        $line,                          # caller file line
-        $fromstate,            # caller state
-        @$etc                           # args
+    $object->$method                         # package/object (implied)
+      ( $self,                               # session
+        $POE::Kernel::poe_kernel,            # kernel
+        $self->[POE::Session::SE_NAMESPACE], # heap
+        $state,                              # state
+        $source_session,                     # sender
+        undef,                               # unused #6
+        $file,                               # caller file name
+        $line,                               # caller file line
+        $fromstate,                          # caller state
+        @$etc                                # args
       );
 }
 
