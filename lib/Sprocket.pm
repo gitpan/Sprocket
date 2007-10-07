@@ -3,7 +3,7 @@ package Sprocket;
 use strict;
 use warnings;
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 use Carp qw( croak );
 use Sprocket::Common;
@@ -36,7 +36,6 @@ sub import {
     unshift( @modules, 'Common' );
     @modules = map { 'Sprocket::'.$_  } @modules;
    
-    # XXX does this work right, TESTME
     unshift( @modules, 'POE' );
 
     my $package = caller();
@@ -315,7 +314,7 @@ Sprocket plugins and paired with a L<Sprocket::Server> or L<Sprocket::Client>.
 Sprocket's callbacks are different from L<POE::Session>'s callbacks.  The
 params are stacked, and not stuffed into two array refs.
 
-Sprocket observer hooks are usable from any module by using Sprocket, 
+Sprocket observer hooks are usable from any module by using Sprocket. 
 
 =head1 METHODS
 

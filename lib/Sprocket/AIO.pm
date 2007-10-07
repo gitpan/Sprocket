@@ -15,7 +15,6 @@ BEGIN {
         eval 'sub HAS_AIO () { 0 }';
     } else {
         eval 'sub HAS_AIO () { 1 }';
-        eval 'IO::AIO::min_parallel 8';
     }
 }
 
@@ -33,11 +32,17 @@ sub import {
         }
     }
 
-    return if ( delete $args->{no_auto_bootstrap} );
+    return if ( !HAS_AIO || delete $args->{no_auto_bootstrap} );
 
     # bootstrap
-    my $code = "package $package; use IO::AIO 2; sub plugin_start_aio { Sprocket::AIO->new( parent_id => shift->parent_id ); }";
-    eval( $code );
+    # XXX I don't like this, let's find another way
+    eval( qq|
+ package $package;
+ use IO::AIO 2;
+ sub plugin_start_aio {
+    Sprocket::AIO->new( parent_id => shift->parent_id );
+ }
+ | );
     croak "could not import AIO into $package : $@"
         if ( $@ );
     
@@ -52,6 +57,7 @@ sub new {
 
     my $self = $sprocket_aio = bless({
         session_id => undef,
+        watch_fork_delay => 2,
         @_,
         pid => $$,
     }, ref $class || $class );
@@ -81,8 +87,9 @@ sub _start {
     $self->{session_id} = $session->ID();
     $kernel->alias_set( "$self" );
     $kernel->call( $session => 'watch_aio' );
-    # XXX ugly
-    $kernel->delay_set( watch_fork => 1 );
+    
+    $kernel->delay_set( watch_fork => $self->{watch_fork_delay} )
+        if ( $self->{watch_for_fork} );
     
     $self->_log( v => 2, msg => 'AIO support module started' );
    
@@ -112,7 +119,7 @@ sub watch_fork {
         $kernel->call( $_[SESSION] => 'restart' );
     }
 
-    $kernel->delay_set( watch_fork => 1 );
+    $kernel->delay_set( watch_fork => $self->{watch_fork_delay} );
 }
 
 sub _stop {
@@ -120,13 +127,13 @@ sub _stop {
 }
 
 sub _log {
+    # TODO replace with $sprocket->log
     $poe_kernel->call( shift->{parent_id} => _log => ( call => ( caller(1) )[ 3 ], @_ ) );
 }
 
 sub shutdown {
     my $self = shift;
-    return unless ( $self->{session_id} );
-    return $poe_kernel->call( $self->{session_id} => shutdown => @_ );
+    return $self->{session_id} ? $poe_kernel->call( $self->{session_id} => shutdown => @_ ) : undef;
 }
 
 sub _shutdown {

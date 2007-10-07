@@ -451,7 +451,7 @@ connect phase.
 
 =head1 SEE ALSO
 
-L<Sprocket>, L<Sprocket::Connection>, L<Sprocket::AIO>, l<Sprocket::Server>,
+L<Sprocket>, L<Sprocket::Connection>, L<Sprocket::AIO>, L<Sprocket::Server>,
 L<Sprocket::Client>, L<Sprocket::Local>
 
 =head1 AUTHOR
